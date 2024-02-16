@@ -70,10 +70,11 @@ func transaction_loop{range_check_ptr: felt}(
     );
 }
 
-func get_accounts() -> (account_ids: felt*, account_ids_len: felt) {
+func get_accounts() -> (account_ids: felt*, account_ids_len: felt, account_ids_len_log: felt) {
     alloc_locals;
     local account_ids: felt*;
     local account_ids_len: felt;
+    local account_ids_len_log: felt;
     %{
         program_input_accounts = program_input["accounts"]
 
@@ -83,8 +84,14 @@ func get_accounts() -> (account_ids: felt*, account_ids_len: felt) {
         ]
         ids.account_ids = segments.gen_arg(account_ids)
         ids.account_ids_len = len(account_ids)
+        import math 
+        ids.account_ids_len_log = math.ceil(math.log(len(account_ids), 2)) + 1
     %}
-    return (account_ids=account_ids, account_ids_len=account_ids_len);
+    return (
+        account_ids=account_ids, 
+        account_ids_len=account_ids_len, 
+        account_ids_len_log=account_ids_len_log
+    );
 }
 
 func get_transactions() -> (transactions: Transaction**, transactions_len: felt) {
@@ -147,7 +154,11 @@ func write_output{output_ptr: felt*}(state: State, account_ids: felt*, account_i
 func main{output_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr: felt, bitwise_ptr: felt*}() -> () {
     alloc_locals;
 
-    let (account_ids: felt*, account_ids_len: felt) = get_accounts();
+    let (
+        account_ids: felt*, 
+        account_ids_len: felt, 
+        account_ids_len_log: felt
+    ) = get_accounts();
     let (account_dict: DictAccess*) = get_accounts_dict();
 
     local state: State;
@@ -171,7 +182,7 @@ func main{output_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr: felt, 
     }(
         squashed_dict_start=squashed_dict_start,
         squashed_dict_end=squashed_dict_end,
-        height=2,
+        height=account_ids_len_log,
     );
 
     assert output_ptr[0] = root_before;
