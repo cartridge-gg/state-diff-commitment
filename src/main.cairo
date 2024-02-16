@@ -21,12 +21,6 @@ struct State {
     account_dict_end: DictAccess*,
 }
 
-struct OutputEntry {
-    valut_id: felt,
-    amount_before: felt,
-    amount_after: felt,
-}
-
 func transaction_loop{range_check_ptr: felt}(
     state: State, transactions: Transaction**, transactions_len
 ) -> (state: State) {
