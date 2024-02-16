@@ -1,15 +1,14 @@
 %builtins output pedersen range_check bitwise
-from starkware.cairo.common.dict import dict_new, dict_read, dict_write
+from starkware.cairo.common.dict import dict_new, dict_read, dict_update, dict_squash
 from starkware.cairo.common.dict_access import DictAccess
 from starkware.cairo.common.math import assert_nn_le
 from starkware.cairo.common.registers import get_fp_and_pc
+from starkware.cairo.common.small_merkle_tree import (
+    small_merkle_tree_update,
+)
+from starkware.cairo.common.cairo_builtins import HashBuiltin
 
 const MAX_BALANCE = 2 ** 128 - 1;
-
-struct Account {
-    initial_balance: felt,
-    balance: felt,
-}
 
 struct Transaction {
     from_valut_id: felt,
@@ -43,22 +42,24 @@ func transaction_loop{range_check_ptr: felt}(
     let from_account_id = first_transaction.from_valut_id;
     let to_account_id = first_transaction.to_valut_id;
 
-    let (old_from_account: Account*) = dict_read{dict_ptr=account_dict_end}(key=from_account_id);
-    let (old_to_account: Account*) = dict_read{dict_ptr=account_dict_end}(key=to_account_id);
-    tempvar new_from_valut_balance = (old_from_account.balance - first_transaction.amount);
-    tempvar new_to_valut_balance = (old_to_account.balance + first_transaction.amount);
-    assert_nn_le(new_from_valut_balance, MAX_BALANCE);
-    assert_nn_le(new_to_valut_balance, MAX_BALANCE);
+    let (old_from_account_balance: felt) = dict_read{dict_ptr=account_dict_end}(key=from_account_id);
+    let (old_to_account_balance: felt) = dict_read{dict_ptr=account_dict_end}(key=to_account_id);
+    tempvar new_from_account_balance = (old_from_account_balance - first_transaction.amount);
+    tempvar new_to_account_balance = (old_to_account_balance + first_transaction.amount);
+    assert_nn_le(new_from_account_balance, MAX_BALANCE);
+    assert_nn_le(new_to_account_balance, MAX_BALANCE);
     
-    local new_from_account: Account;
-    local new_to_account: Account;
-    assert new_from_account.initial_balance = old_from_account.initial_balance;
-    assert new_from_account.balance = new_from_valut_balance;
-    assert new_to_account.initial_balance = old_to_account.initial_balance;
-    assert new_to_account.balance = new_to_valut_balance;
     let (__fp__, _) = get_fp_and_pc();
-    dict_write{dict_ptr=account_dict_end}(key=from_account_id, new_value=cast(&new_from_account, felt));
-    dict_write{dict_ptr=account_dict_end}(key=to_account_id, new_value=cast(&new_to_account, felt));
+    dict_update{dict_ptr=account_dict_end}(
+        key=from_account_id, 
+        prev_value=old_from_account_balance, 
+        new_value=new_from_account_balance
+    );
+    dict_update{dict_ptr=account_dict_end}(
+        key=to_account_id, 
+        prev_value=old_to_account_balance,
+        new_value=new_to_account_balance
+    );
 
     local new_state: State;
     new_state.account_dict_start = state.account_dict_start;
@@ -113,12 +114,7 @@ func get_accounts_dict() -> (account_dict: DictAccess*) {
         program_input_accounts = program_input["accounts"]
 
         initial_dict = {
-            int(account_id): segments.gen_arg(
-                (
-                    int(info["balance"]),
-                    int(info["balance"]),
-                )
-            )
+            int(account_id): int(info["balance"])
             for account_id, info in program_input_accounts.items()
         }
     %}
@@ -137,33 +133,22 @@ func write_output{output_ptr: felt*}(state: State, account_ids: felt*, account_i
     
     let account_id = account_ids[0];
     let account_dict_end = state.account_dict_end;
-    let (account: Account*) = dict_read{dict_ptr=account_dict_end}(key=account_id);
+    let (balance: felt) = dict_read{dict_ptr=account_dict_end}(key=account_id);
     new_state.account_dict_end = account_dict_end;
 
     assert output_ptr[0] = account_id;
-    assert output_ptr[1] = account.initial_balance;
-    assert output_ptr[2] = account.balance;
-    let output_ptr = output_ptr + 3;
+    assert output_ptr[1] = balance;
+    let output_ptr = output_ptr + 2;
     
     return write_output(new_state, account_ids + 1, account_ids_len - 1);
 }
 
-func verify_account_dict(account_ids: felt*, account_ids_len: felt, account_dict: DictAccess*) -> (account_dict: DictAccess*) {
-    if (account_ids_len == 0) {
-        return (account_dict=account_dict);
-    }
-    let account_id = account_ids[0];
-    let (account: Account*) = dict_read{dict_ptr=account_dict}(key=account_id);
-    assert account.initial_balance = account.balance;
-    return verify_account_dict(account_ids + 1, account_ids_len - 1, account_dict);
-}
 
-func main{output_ptr: felt*, pedersen_ptr: felt*, range_check_ptr: felt, bitwise_ptr: felt*}() -> () {
+func main{output_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr: felt, bitwise_ptr: felt*}() -> () {
     alloc_locals;
 
     let (account_ids: felt*, account_ids_len: felt) = get_accounts();
     let (account_dict: DictAccess*) = get_accounts_dict();
-    let (account_dict: DictAccess*) = verify_account_dict(account_ids, account_ids_len, account_dict);
 
     local state: State;
     assert state.account_dict_start = account_dict;
@@ -174,6 +159,24 @@ func main{output_ptr: felt*, pedersen_ptr: felt*, range_check_ptr: felt, bitwise
     let (state: State) = transaction_loop(state, transactions, transactions_len);
 
     let (output_ptr, state) = write_output(state, account_ids, account_ids_len);
+
+    let (squashed_dict_start, squashed_dict_end) = dict_squash(
+        dict_accesses_start=state.account_dict_start,
+        dict_accesses_end=state.account_dict_end,
+    );
+    local range_check_ptr = range_check_ptr;
+
+    let (root_before, root_after) = small_merkle_tree_update{
+        hash_ptr=pedersen_ptr
+    }(
+        squashed_dict_start=squashed_dict_start,
+        squashed_dict_end=squashed_dict_end,
+        height=2,
+    );
+
+    assert output_ptr[0] = root_before;
+    assert output_ptr[1] = root_after;
+    let output_ptr = output_ptr + 2;
 
     return ();
 }
