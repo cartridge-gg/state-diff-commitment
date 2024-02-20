@@ -1,186 +1,300 @@
 %builtins output pedersen range_check bitwise
-from starkware.cairo.common.dict import dict_new, dict_read, dict_update, dict_squash
-from starkware.cairo.common.dict_access import DictAccess
-from starkware.cairo.common.math import assert_nn_le
-from starkware.cairo.common.registers import get_fp_and_pc
-from starkware.cairo.common.small_merkle_tree import (
-    small_merkle_tree_update,
-)
 from starkware.cairo.common.cairo_builtins import HashBuiltin
+from starkware.cairo.common.hash import hash2
 
-const MAX_BALANCE = 2 ** 128 - 1;
-
-struct Transaction {
-    from_valut_id: felt,
-    to_valut_id: felt,
-    amount: felt,
-}
-
-struct State {
-    account_dict_start: DictAccess*,
-    account_dict_end: DictAccess*,
-}
-
-func transaction_loop{range_check_ptr: felt}(
-    state: State, transactions: Transaction**, transactions_len
-) -> (state: State) {
-    if (transactions_len == 0) {
-        return (state=state);
-    }
+func get_hashes() -> (
+    genesis_state_hash: felt, 
+    prev_state_hash: felt
+) {
     alloc_locals;
-
-    let first_transaction: Transaction* = [transactions];
-
-    let account_dict_end = state.account_dict_end;
-    
-    let from_account_id = first_transaction.from_valut_id;
-    let to_account_id = first_transaction.to_valut_id;
-
-    let (old_from_account_balance: felt) = dict_read{dict_ptr=account_dict_end}(key=from_account_id);
-    let (old_to_account_balance: felt) = dict_read{dict_ptr=account_dict_end}(key=to_account_id);
-    tempvar new_from_account_balance = (old_from_account_balance - first_transaction.amount);
-    tempvar new_to_account_balance = (old_to_account_balance + first_transaction.amount);
-    assert_nn_le(new_from_account_balance, MAX_BALANCE);
-    assert_nn_le(new_to_account_balance, MAX_BALANCE);
-    
-    let (__fp__, _) = get_fp_and_pc();
-    dict_update{dict_ptr=account_dict_end}(
-        key=from_account_id, 
-        prev_value=old_from_account_balance, 
-        new_value=new_from_account_balance
-    );
-    dict_update{dict_ptr=account_dict_end}(
-        key=to_account_id, 
-        prev_value=old_to_account_balance,
-        new_value=new_to_account_balance
-    );
-
-    local new_state: State;
-    new_state.account_dict_start = state.account_dict_start;
-    new_state.account_dict_end = account_dict_end;
-
-    return transaction_loop(
-        state=new_state, transactions=transactions + 1, transactions_len=transactions_len - 1
-    );
-}
-
-func get_accounts() -> (account_ids: felt*, account_ids_len: felt, account_ids_len_log: felt) {
-    alloc_locals;
-    local account_ids: felt*;
-    local account_ids_len: felt;
-    local account_ids_len_log: felt;
+    local genesis_state_hash: felt;
+    local prev_state_hash: felt;
     %{
-        program_input_accounts = program_input["accounts"]
-
-        account_ids = [
-            int(account_id)
-            for account_id in program_input_accounts.keys()
-        ]
-        ids.account_ids = segments.gen_arg(account_ids)
-        ids.account_ids_len = len(account_ids)
-        import math 
-        ids.account_ids_len_log = math.ceil(math.log(len(account_ids), 2)) + 1
+        ids.genesis_state_hash = program_input["genesis_state_hash"]
+        ids.prev_state_hash = program_input["prev_state_hash"]
     %}
     return (
-        account_ids=account_ids, 
-        account_ids_len=account_ids_len, 
-        account_ids_len_log=account_ids_len_log
+        genesis_state_hash=genesis_state_hash, 
+        prev_state_hash=prev_state_hash
     );
 }
 
-func get_transactions() -> (transactions: Transaction**, transactions_len: felt) {
-    alloc_locals;
-    local transactions: Transaction**;
-    local transactions_len: felt;
-    %{
-        program_input_transactions = program_input["transactions"]
+struct NonceUpdate {
+    contract_address: felt,
+    nonce: felt,
+}
 
-        transactions = [
+func get_nonce_updates() -> (nonce_updates: NonceUpdate**, nonce_updates_len: felt) {
+    alloc_locals;
+    local nonce_updates: NonceUpdate**;
+    local nonce_updates_len: felt;
+    %{
+        program_input_nonce_updates = program_input["nonce_updates"]
+
+        nonce_updates = [
             (
-                int(transaction["from_account_id"]),
-                int(transaction["to_account_id"]),
-                int(transaction["amount"]),
+                int(key),
+                int(value),
             )
-            for transaction in program_input_transactions
+            for key, value in program_input_nonce_updates.items()
         ]
-        ids.transactions = segments.gen_arg(transactions)
-        ids.transactions_len = len(transactions)
+        ids.nonce_updates = segments.gen_arg(nonce_updates)
+        ids.nonce_updates_len = len(nonce_updates)
     %}
-    return (transactions=transactions, transactions_len=transactions_len);
+    return (nonce_updates=nonce_updates, nonce_updates_len=nonce_updates_len);
 }
 
-func get_accounts_dict() -> (account_dict: DictAccess*) {
-    alloc_locals;
-    %{
-        program_input_accounts = program_input["accounts"]
-
-        initial_dict = {
-            int(account_id): int(info["balance"])
-            for account_id, info in program_input_accounts.items()
-        }
-    %}
-
-    let (account_dict) = dict_new();
-    return (account_dict=account_dict);
+func hash_nonce_update{pedersen_ptr: HashBuiltin*}(
+    nonce_update: NonceUpdate*
+) -> (res: felt) {
+    let res = nonce_update.contract_address;
+    let (res) = hash2{hash_ptr=pedersen_ptr}(
+        res, nonce_update.nonce
+    );
+    return (res=res);
 }
 
-func write_output{output_ptr: felt*}(state: State, account_ids: felt*, account_ids_len: felt) -> (output_ptr: felt*, state: State) {
-    if (account_ids_len == 0) {
-        return (output_ptr=output_ptr, state=state);
+func hash_nonce_updates_loop{pedersen_ptr: HashBuiltin*}(
+    res: felt, nonce_updates: NonceUpdate**, nonce_updates_len
+) -> (res: felt) {
+    if (nonce_updates_len == 0) {
+        return (res=res);
     }
     alloc_locals;
-    local new_state: State;
-    new_state.account_dict_start = state.account_dict_start;
-    
-    let account_id = account_ids[0];
-    let account_dict_end = state.account_dict_end;
-    let (balance: felt) = dict_read{dict_ptr=account_dict_end}(key=account_id);
-    new_state.account_dict_end = account_dict_end;
-
-    assert output_ptr[0] = account_id;
-    assert output_ptr[1] = balance;
-    let output_ptr = output_ptr + 2;
-    
-    return write_output(new_state, account_ids + 1, account_ids_len - 1);
+    let nonce_update = [nonce_updates];
+    let (hash) = hash_nonce_update{pedersen_ptr=pedersen_ptr}(nonce_update);
+    let (res) = hash2{hash_ptr=pedersen_ptr}(
+        res, hash
+    );
+    return hash_nonce_updates_loop{pedersen_ptr=pedersen_ptr}(
+        res=res, 
+        nonce_updates=nonce_updates + 1, 
+        nonce_updates_len=nonce_updates_len - 1
+    );
 }
 
+struct StorageUpdate {
+    contract_address: felt,
+    storage_key: felt,
+    storage_value: felt,
+}
+
+func get_storage_updates() -> (storage_updates: StorageUpdate**, storage_updates_len: felt) {
+    alloc_locals;
+    local storage_updates: StorageUpdate**;
+    local storage_updates_len: felt;
+    %{
+        program_input_storage_updates = program_input["storage_updates"]
+
+        storage_updates = [
+            (
+                int(contract),
+                int(key),
+                int(value),
+            )
+            for 
+                contract, update in 
+                    program_input_storage_updates.items() 
+                for 
+                    key, value in update.items()
+        ]
+        ids.storage_updates = segments.gen_arg(storage_updates)
+        ids.storage_updates_len = len(storage_updates)
+    %}
+    return (storage_updates=storage_updates, storage_updates_len=storage_updates_len);
+}
+
+func hash_storage_update{pedersen_ptr: HashBuiltin*}(
+    storage_update: StorageUpdate*
+) -> (res: felt) {
+    let res = storage_update.contract_address;
+    let (res) = hash2{hash_ptr=pedersen_ptr}(
+        res, storage_update.storage_key
+    );
+    let (res) = hash2{hash_ptr=pedersen_ptr}(
+        res, storage_update.storage_value
+    );
+    return (res=res);
+}
+
+func hash_storage_updates_loop{pedersen_ptr: HashBuiltin*}(
+    res: felt, storage_updates: StorageUpdate**, storage_updates_len
+) -> (res: felt) {
+    if (storage_updates_len == 0) {
+        return (res=res);
+    }
+    alloc_locals;
+    let storage_update = [storage_updates];
+    let (hash) = hash_storage_update{pedersen_ptr=pedersen_ptr}(storage_update);
+    let (res) = hash2{hash_ptr=pedersen_ptr}(
+        res, hash
+    );
+    return hash_storage_updates_loop{pedersen_ptr=pedersen_ptr}(
+        res=res, 
+        storage_updates=storage_updates + 1, 
+        storage_updates_len=storage_updates_len - 1
+    );
+}
+
+
+struct ContractUpdate {
+    contract_address: felt,
+    class_hash: felt,
+}
+
+func get_contract_updates() -> (contract_updates: ContractUpdate**, contract_updates_len: felt) {
+    alloc_locals;
+    local contract_updates: ContractUpdate**;
+    local contract_updates_len: felt;
+    %{
+        program_input_contract_updates = program_input["contract_updates"]
+
+        contract_updates = [
+            (
+                int(key),
+                int(value),
+            )
+            for key, value in program_input_contract_updates.items()
+        ]
+        ids.contract_updates = segments.gen_arg(contract_updates)
+        ids.contract_updates_len = len(contract_updates)
+    %}
+    return (contract_updates=contract_updates, contract_updates_len=contract_updates_len);
+}
+
+func hash_contract_update{pedersen_ptr: HashBuiltin*}(
+    contract_update: ContractUpdate*
+) -> (res: felt) {
+    let res = contract_update.contract_address;
+    let (res) = hash2{hash_ptr=pedersen_ptr}(
+        res, contract_update.class_hash
+    );
+    return (res=res);
+}
+
+func hash_contract_updates_loop{pedersen_ptr: HashBuiltin*}(
+    res: felt, contract_updates: ContractUpdate**, contract_updates_len
+) -> (res: felt) {
+    if (contract_updates_len == 0) {
+        return (res=res);
+    }
+    alloc_locals;
+    let contract_update = [contract_updates];
+    let (hash) = hash_contract_update{pedersen_ptr=pedersen_ptr}(contract_update);
+    let (res) = hash2{hash_ptr=pedersen_ptr}(
+        res, hash
+    );
+    return hash_contract_updates_loop{pedersen_ptr=pedersen_ptr}(
+        res=res, 
+        contract_updates=contract_updates + 1, 
+        contract_updates_len=contract_updates_len - 1
+    );
+}
+
+struct DeclaredClass {
+    class_hash: felt,
+    compiled_class_hash: felt,
+}
+
+func get_declared_classes() -> (declared_classes: DeclaredClass**, declared_classes_len: felt) {
+    alloc_locals;
+    local declared_classes: DeclaredClass**;
+    local declared_classes_len: felt;
+    %{
+        program_input_declared_classes = program_input["declared_classes"]
+
+        declared_classes = [
+            (
+                int(key),
+                int(value),
+            )
+            for key, value in program_input_declared_classes.items()
+        ]
+        ids.declared_classes = segments.gen_arg(declared_classes)
+        ids.declared_classes_len = len(declared_classes)
+    %}
+    return (declared_classes=declared_classes, declared_classes_len=declared_classes_len);
+}
+
+func hash_declared_class{pedersen_ptr: HashBuiltin*}(
+    declared_class: DeclaredClass*
+) -> (res: felt) {
+    let res = declared_class.class_hash;
+    let (res) = hash2{hash_ptr=pedersen_ptr}(
+        res, declared_class.compiled_class_hash
+    );
+    return (res=res);
+}
+
+func hash_declared_classes_loop{pedersen_ptr: HashBuiltin*}(
+    res: felt, declared_classes: DeclaredClass**, declared_classes_len
+) -> (res: felt) {
+    if (declared_classes_len == 0) {
+        return (res=res);
+    }
+    alloc_locals;
+    let declared_class = [declared_classes];
+    let (hash) = hash_declared_class{pedersen_ptr=pedersen_ptr}(declared_class);
+    let (res) = hash2{hash_ptr=pedersen_ptr}(
+        res, hash
+    );
+    return hash_declared_classes_loop{pedersen_ptr=pedersen_ptr}(
+        res=res, 
+        declared_classes=declared_classes + 1, 
+        declared_classes_len=declared_classes_len - 1
+    );
+}
 
 func main{output_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr: felt, bitwise_ptr: felt*}() -> () {
     alloc_locals;
 
     let (
-        account_ids: felt*, 
-        account_ids_len: felt, 
-        account_ids_len_log: felt
-    ) = get_accounts();
-    let (account_dict: DictAccess*) = get_accounts_dict();
-
-    local state: State;
-    assert state.account_dict_start = account_dict;
-    assert state.account_dict_end = account_dict;
-
-    let (transactions: Transaction**, transactions_len: felt) = get_transactions();
-
-    let (state: State) = transaction_loop(state, transactions, transactions_len);
-
-    let (output_ptr, state) = write_output(state, account_ids, account_ids_len);
-
-    let (squashed_dict_start, squashed_dict_end) = dict_squash(
-        dict_accesses_start=state.account_dict_start,
-        dict_accesses_end=state.account_dict_end,
+        genesis_state_hash: felt, 
+        prev_state_hash: felt
+    ) = get_hashes();
+    let (
+        nonce_updates: NonceUpdate**, 
+        nonce_updates_len: felt
+    ) = get_nonce_updates();
+    let (
+        storage_updates: StorageUpdate**, 
+        storage_updates_len: felt
+    ) = get_storage_updates();
+    let (
+        contract_updates: ContractUpdate**, 
+        contract_updates_len: felt
+    ) = get_contract_updates();
+    let (
+        declared_classes: DeclaredClass**, 
+        declared_classes_len: felt
+    ) = get_declared_classes();
+    
+    let(res) = hash2{hash_ptr=pedersen_ptr}(
+        genesis_state_hash, prev_state_hash
     );
-    local range_check_ptr = range_check_ptr;
-
-    let (root_before, root_after) = small_merkle_tree_update{
-        hash_ptr=pedersen_ptr
-    }(
-        squashed_dict_start=squashed_dict_start,
-        squashed_dict_end=squashed_dict_end,
-        height=account_ids_len_log,
+    let(res) = hash_nonce_updates_loop{pedersen_ptr=pedersen_ptr}(
+        res, 
+        nonce_updates, 
+        nonce_updates_len
+    );
+    let(res) = hash_storage_updates_loop{pedersen_ptr=pedersen_ptr}(
+        res, 
+        storage_updates, 
+        storage_updates_len
+    );
+    let(res) = hash_contract_updates_loop{pedersen_ptr=pedersen_ptr}(
+        res, 
+        contract_updates, 
+        contract_updates_len
+    );
+    let(res) = hash_declared_classes_loop{pedersen_ptr=pedersen_ptr}(
+        res, 
+        declared_classes, 
+        declared_classes_len
     );
 
-    assert output_ptr[0] = root_before;
-    assert output_ptr[1] = root_after;
+    assert output_ptr[0] = genesis_state_hash;
+    assert output_ptr[1] = res;
     let output_ptr = output_ptr + 2;
 
     return ();
