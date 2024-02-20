@@ -24,21 +24,21 @@ To illustrate the input format, consider the following JSON representation:
     "prev_state_hash": 34343434343,
     "nonce_updates": {
         "7589307": 12,
-        ...
+        " ... "
     },
     "storage_updates": {
         "48732904": {
             "123456789": 89,
-            ...
+            " ... "
         },
-        ...
+        " ... "
     },
     "contract_updates": {
         "58734905": 437267489
     },
     "declared_classes": {
         "1234": 12345,
-        ...
+        " ... "
     }
 }
 ```
