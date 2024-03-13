@@ -5,7 +5,7 @@ print_in_blue() {
 }
 
 print_in_blue "Creating python virtual environment..." && \
-time ./scripts/create-venv.sh && \
+time ./scripts/venv.sh && \
 
 print_in_blue "Compiling the program..." && \
 time ./scripts/compile.sh && \
