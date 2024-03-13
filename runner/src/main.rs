@@ -113,8 +113,8 @@ async fn main() {
     let prover = Prover("state-diff-commitment".to_string());
     prover
         .pull(
-            "neotheprogramist/prover:latest",
-            "neotheprogramist/verifier",
+            "neotheprogramist/stone5-poseidon3:latest",
+            "neotheprogramist/verifier:latest",
         )
         .await
         .unwrap();
