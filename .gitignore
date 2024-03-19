@@ -3,3 +3,4 @@ resources
 proof.json
 target
 Cargo.lock
+*.bin
