@@ -58,3 +58,29 @@ To execute the program, run the `run.sh` script in the root directory. If you wa
 ```
 
 This command will create a virtual python enviroment, compile, and execute the program with the provided input and display the resulting `genesis_state_hash` and `new_state_hash`.
+
+## Building and publishing the image
+
+```bash
+podman build -t stone5-poseidon3 -f prover.dockerfile .
+```
+
+```bash
+podman push localhost/stone5-poseidon3:latest docker.io/username/stone5-poseidon3:latest
+```
+
+```bash
+podman build -t example-program -f example-program.dockerfile .
+```
+
+```bash
+podman run -i --rm example-program < program_input.json > proof.json
+```
+
+```bash
+podman run -i --rm verifier < proof.json
+```
+
+```bash
+podman push localhost/verifier:latest docker.io/username/verifier:latest
+```
