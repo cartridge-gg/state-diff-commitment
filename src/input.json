@@ -1,6 +1,20 @@
 {
-    "genesis_state_hash": 12312321313,
-    "prev_state_hash": 34343434343,
+    "prev_state_root": 34343434343,
+    "block_number": 123456,
+    "block_hash": 1234567890,
+    "config_hash": 1234567890,
+    "message_to_starknet_segment": [
+        123,
+        456,
+        123,
+        128
+    ],
+    "message_to_appchain_segment": [
+        123,
+        456,
+        123,
+        128
+    ],
     "nonce_updates": {
         "1": 12,
         "2": 1337

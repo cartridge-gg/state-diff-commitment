@@ -2,20 +2,69 @@
 from starkware.cairo.common.cairo_builtins import HashBuiltin
 from starkware.cairo.common.hash import hash2
 
+struct InputConfig {
+    prev_state_root: felt,
+    block_number: felt,
+    block_hash: felt,
+    config_hash: felt,
+}
+
 func get_hashes() -> (
-    genesis_state_hash: felt, 
-    prev_state_hash: felt
+    input_config: InputConfig
 ) {
     alloc_locals;
-    local genesis_state_hash: felt;
-    local prev_state_hash: felt;
+    local input_config: InputConfig;
+    local prev_state_root: felt;
+    local block_number: felt;
+    local block_hash: felt;
+    local config_hash: felt;
     %{
-        ids.genesis_state_hash = program_input["genesis_state_hash"]
-        ids.prev_state_hash = program_input["prev_state_hash"]
+        ids.prev_state_root = program_input["prev_state_root"]
+        ids.block_number = program_input["block_number"]
+        ids.block_hash = program_input["block_hash"]
+        ids.config_hash = program_input["config_hash"]
     %}
     return (
-        genesis_state_hash=genesis_state_hash, 
-        prev_state_hash=prev_state_hash
+        input_config=InputConfig(
+            prev_state_root=prev_state_root,
+            block_number=block_number,
+            block_hash=block_hash,
+            config_hash=config_hash
+        )
+    );
+}
+
+func get_messages() -> (
+    message_to_starknet_segment: felt*, 
+    message_to_starknet_segment_len: felt,
+    message_to_appchain_segment: felt*, 
+    message_to_appchain_segment_len: felt
+) {
+    alloc_locals;
+    local message_to_starknet_segment: felt*;
+    local message_to_starknet_segment_len: felt;
+    local message_to_appchain_segment: felt*;
+    local message_to_appchain_segment_len: felt;
+    %{
+        message_to_starknet_segment = \
+            program_input["message_to_starknet_segment"]
+        message_to_appchain_segment = \
+            program_input["message_to_appchain_segment"]
+
+        ids.message_to_starknet_segment = \
+            segments.gen_arg(message_to_starknet_segment)
+        ids.message_to_starknet_segment_len = \
+            len(message_to_starknet_segment)
+        ids.message_to_appchain_segment = \
+            segments.gen_arg(message_to_appchain_segment)
+        ids.message_to_appchain_segment_len = \
+            len(message_to_appchain_segment)
+    %}
+    return (
+        message_to_starknet_segment=message_to_starknet_segment,
+        message_to_starknet_segment_len=message_to_starknet_segment_len,
+        message_to_appchain_segment=message_to_appchain_segment,
+        message_to_appchain_segment_len=message_to_appchain_segment_len
     );
 }
 
@@ -245,12 +294,22 @@ func hash_declared_classes_loop{pedersen_ptr: HashBuiltin*}(
     );
 }
 
+func output_array{output_ptr: felt*}(array: felt*, len: felt) -> () {
+    if (len == 0) {
+        return ();
+    }
+    alloc_locals;
+    let value = [array];
+    assert output_ptr[0] = value;
+    let output_ptr = output_ptr + 1;
+    return output_array{output_ptr=output_ptr}(array + 1, len - 1);
+}
+
 func main{output_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr: felt, bitwise_ptr: felt*}() -> () {
     alloc_locals;
 
     let (
-        genesis_state_hash: felt, 
-        prev_state_hash: felt
+        input_config: InputConfig
     ) = get_hashes();
     let (
         nonce_updates: NonceUpdate**, 
@@ -270,7 +329,13 @@ func main{output_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr: felt, 
     ) = get_declared_classes();
     
     let(res) = hash2{hash_ptr=pedersen_ptr}(
-        genesis_state_hash, prev_state_hash
+        input_config.prev_state_root, input_config.block_number
+    );
+    let(res) = hash2{hash_ptr=pedersen_ptr}(
+        res, input_config.block_hash
+    );
+    let(res) = hash2{hash_ptr=pedersen_ptr}(
+        res, input_config.config_hash
     );
     let(res) = hash_nonce_updates_loop{pedersen_ptr=pedersen_ptr}(
         res, 
@@ -293,9 +358,26 @@ func main{output_ptr: felt*, pedersen_ptr: HashBuiltin*, range_check_ptr: felt, 
         declared_classes_len
     );
 
-    assert output_ptr[0] = genesis_state_hash;
-    assert output_ptr[1] = res;
-    let output_ptr = output_ptr + 2;
+    assert output_ptr[0] = input_config.prev_state_root;
+    assert output_ptr[1] = res; // new_state_root
+    assert output_ptr[2] = input_config.block_number;
+    assert output_ptr[3] = input_config.block_hash;
+    assert output_ptr[4] = input_config.config_hash;
+    let output_ptr = output_ptr + 5;
+
+    let (
+        message_to_starknet_segment: felt*, 
+        message_to_starknet_segment_len: felt,
+        message_to_appchain_segment: felt*, 
+        message_to_appchain_segment_len: felt
+    ) = get_messages();
+    
+    assert output_ptr[0] = message_to_starknet_segment_len;
+    let output_ptr = output_ptr + 1;
+    output_array{output_ptr=output_ptr}(message_to_starknet_segment, message_to_starknet_segment_len);
+    assert output_ptr[0] = message_to_appchain_segment_len;
+    let output_ptr = output_ptr + 1;
+    output_array{output_ptr=output_ptr}(message_to_appchain_segment, message_to_appchain_segment_len);
 
     return ();
 }
