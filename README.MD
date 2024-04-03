@@ -61,26 +61,15 @@ This command will create a virtual python enviroment, compile, and execute the p
 
 ## Building and publishing the image
 
-```bash
-podman build -t stone5-poseidon3 -f prover.dockerfile .
-```
+- Build the image:
 
-```bash
-podman push localhost/stone5-poseidon3:latest docker.io/username/stone5-poseidon3:latest
-```
+    ```bash
+    podman build -t state-diff-commitment .
+    ```
 
-```bash
-podman build -t example-program -f example-program.dockerfile .
-```
+    When asked about the `stone5-poseidon3` image select the `docker.io` version
 
-```bash
-podman run -i --rm example-program < program_input.json > proof.json
-```
-
-```bash
-podman run -i --rm verifier < proof.json
-```
-
-```bash
-podman push localhost/verifier:latest docker.io/username/verifier:latest
-```
+- Push the image to `dockerhub:
+    ```bash
+    podman push localhost/state-diff-commitment:latest docker.io/username/state-diff-commitment:latest
+    ```
