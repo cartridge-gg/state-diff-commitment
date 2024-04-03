@@ -108,5 +108,5 @@ This command will create a virtual python enviroment, compile, and execute the p
 
 - Push the image to `dockerhub:
     ```bash
-    podman push localhost/state-diff-commitment:latest docker.io/username/state-diff-commitment:latest
+    podman push localhost/state-diff-commitment:latest docker.io/<USERNAME>/state-diff-commitment:latest
     ```
