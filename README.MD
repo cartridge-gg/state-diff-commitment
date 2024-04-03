@@ -7,10 +7,10 @@ This repository contains a provable cairo program that computes the hash of a st
 The input format consists of the following components:
 
 <!-- TODO: Add descruotuib to these fields -->
-- `prev_state_root`
-- `block_number`
-- `block_hash`
-- `config_hash`
+- `prev_state_root`: The state commitment before this block.
+- `block_number`: The number (height) of this block.
+- `block_hash`: The hash of this block.
+- `config_hash`: The Starknet chain config hash.
 - `message_to_starknet_segment`
 - `message_to_appchain_segment`
 - `nonce_updates`: A mapping of contract addresses to their updated nonces.
@@ -106,7 +106,7 @@ This command will create a virtual python enviroment, compile, and execute the p
 
     When asked about the `stone5-poseidon3` image select the `docker.io` version
 
-- Push the image to `dockerhub:
+- Push the image to `dockerhub`:
     ```bash
     podman push localhost/state-diff-commitment:latest docker.io/<USERNAME>/state-diff-commitment:latest
     ```
